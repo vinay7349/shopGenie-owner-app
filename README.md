@@ -1,80 +1,89 @@
-# ShopGenie AI — Smart Retail Management & Billing System
+# ShopGenie AI — Smart Retail Management & POS Billing System
 
-ShopGenie is a comprehensive, production-grade retail management and POS billing platform specifically engineered for Kirana stores and independent retail businesses. The system combines a modern native Android application built with **Jetpack Compose (Material 3)**, a robust **Django REST Framework** backend with strict **Role-Based Access Control (RBAC)**, and a **Computer Vision Engine** for fast visual product recognition and weighing.
+ShopGenie is a production-grade retail management and POS billing platform specifically engineered for Kirana stores and independent retail businesses. The system combines:
+
+1. **Flutter & Dart Cross-Platform App (`flutter_app/`)**: Full-featured mobile client built with **Flutter 3.x and Dart**, featuring Material 3 UI, role-based navigation for Shop Owners and Workers, single-shop profile management, and POS billing.
+2. **Native Android App (`app/`)**: Native client built with **Jetpack Compose (Material 3)**, Retrofit 2, and Kotlin Coroutines, powering the live interactive preview.
+3. **Django REST Framework Backend (`shopgenie/backend/`)**: Backend API with strict **Role-Based Access Control (RBAC)**, 1:1 Shop Ownership enforcement, worker management with permission toggles, cost-price masking for workers, and atomic stock transactions.
+4. **Computer Vision Engine (`cv_engine/`)**: PyTorch MobileNetV3 + OpenCV pipeline producing 576-dimensional L2-normalized embeddings for instant visual product recognition.
 
 ---
 
 ## Architecture Overview
 
 ```text
-┌────────────────────────────────────────────────────────────────────────┐
-│                        ShopGenie System Overview                       │
-└────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           ShopGenie Architecture Overview                       │
+└─────────────────────────────────────────────────────────────────────────────────┘
 
-    ┌───────────────────────────┐         ┌───────────────────────────┐
-    │     Shop Owner Device     │         │    Shop Worker Device     │
-    │  (Full Admin & Analytics) │         │  (Streamlined POS Billing)│
-    └─────────────┬─────────────┘         └─────────────┬─────────────┘
-                  │                                     │
-                  │   Kotlin / Jetpack Compose (M3)     │
-                  │   Retrofit 2 + Moshi + Flow         │
-                  ▼                                     ▼
-    ┌─────────────────────────────────────────────────────────────────┐
-    │                Django REST Framework (Backend API)              │
-    │  • Single-Shop Architecture & 1:1 Ownership Enforcement        │
-    │  • RBAC: SHOP_OWNER vs. SHOP_WORKER Permissions                 │
-    │  • Cost-Price Masking & Sensitive Data Protection               │
-    │  • Atomic Transactions for Stock & Billing                      │
-    └──────────────────┬───────────────────────────────┬──────────────┘
-                       │                               │
-                       ▼                               ▼
-         ┌───────────────────────────┐   ┌───────────────────────────┐
-         │    PostgreSQL / SQLite    │   │  Computer Vision Engine   │
-         │ (Users, Shop, Inventory,  │   │  • PyTorch + MobileNetV3  │
-         │      Invoices, Items)     │   │  • OpenCV Frame Matching  │
-         └───────────────────────────┘   │  • ESP32-CAM Stream       │
-                                         └───────────────────────────┘
+ ┌──────────────────────────────────────┐       ┌──────────────────────────────────────┐
+ │      Flutter & Dart Client           │       │    Native Android Client             │
+ │         (`flutter_app/`)             │       │            (`app/`)                  │
+ │  • Cross-platform (Android/iOS/Web)  │       │  • Jetpack Compose (Material 3)      │
+ │  • Material 3 UI & Responsive Design │       │  • Live In-Browser Streaming Preview │
+ │  • Single-Shop & Worker RBAC UI      │       │  • Retrofit 2 + Moshi + Coroutines   │
+ └──────────────────┬───────────────────┘       └──────────────────┬───────────────────┘
+                    │                                              │
+                    │         HTTP / JSON REST API with JWT        │
+                    └───────────────────────┬──────────────────────┘
+                                            ▼
+ ┌─────────────────────────────────────────────────────────────────────────────────┐
+ │                       Django REST Framework (Backend API)                       │
+ │  • Single-Shop Rule: Each Shop Owner owns and manages exactly 1 active shop     │
+ │  • Strict RBAC: SHOP_OWNER vs. SHOP_WORKER roles with backend enforcement       │
+ │  • Worker Management: Invite/assign workers, toggle active status & permissions │
+ │  • Cost-Price Masking: Workers cannot see cost prices or gross profit margins   │
+ │  • Atomic Transactions: Stock deduction & invoice creation in 1 transaction     │
+ └──────────────────────────┬───────────────────────────────┬──────────────────────┘
+                            │                               │
+                            ▼                               ▼
+              ┌───────────────────────────┐   ┌───────────────────────────┐
+              │    PostgreSQL / SQLite    │   │  Computer Vision Engine   │
+              │ (Users, Shop, Workers,    │   │  • PyTorch + MobileNetV3  │
+              │  Products, Invoices)      │   │  • OpenCV Cosine Match    │
+              └───────────────────────────┘   │  • ESP32-CAM Stream       │
+                                              └───────────────────────────┘
 ```
 
 ---
 
-## Core Features
+## Key Features
 
-### 1. Single-Shop Ownership Architecture
-- **Strict Single-Shop Model:** Every authenticated Shop Owner account owns and manages exactly one active shop (`accounts.Shop`).
-- **Clean "My Shop" Interface:** Replaces legacy multi-shop switching with a dedicated, focused store profile screen.
-- **Storefront Configuration:** Manage shop name, category, contact information, business hours, and verification status.
-- **Data Protection:** Backend and frontend prevent ordinary owners from creating duplicate shops or accessing other owners' stores.
+### 1. Single-Shop Ownership Model
+- **1:1 Shop Ownership:** Every authenticated Shop Owner account owns and manages exactly one active shop (`accounts.Shop`).
+- **Dedicated "My Shop" Interface:** Replaces legacy multi-shop switching with a focused, comprehensive store profile.
+- **Storefront Details:** Configure shop name, category, contact information, business hours, and view verification status.
+- **Security & Isolation:** Prevents ordinary owners from creating multiple shops or accessing another owner's shop data.
 
-### 2. Role-Based Access Control (RBAC)
+### 2. Dual Roles: Shop Owner vs. Shop Worker
 - **`SHOP_OWNER` Account:**
-  - Full store overview with real-time sales and gross profit analytics (`/api/billing/analytics/`).
-  - Catalog and inventory management: add, edit, or adjust stock levels and cost prices.
-  - Full access to manage workers and configure shop settings.
+  - Full analytics dashboard with real-time gross revenue, net profit, and order metrics (`/api/billing/analytics/`).
+  - Catalog and inventory management: add, edit, or adjust stock levels, selling prices, and cost prices.
+  - Worker management: invite, activate/deactivate, and configure worker privileges.
+  - Shop configuration and operational settings.
 - **`SHOP_WORKER` Account:**
-  - Tailored, distraction-free **Worker Dashboard**.
-  - Camera-based visual billing, barcode scanning, and manual cart additions.
-  - Catalog viewing with **backend-enforced cost-price masking** (cost prices are redacted at the serializer level).
-  - Restricted access: workers cannot view profit reports, modify product purchase prices, or alter shop ownership settings.
+  - Streamlined, distraction-free **Worker Dashboard**.
+  - Camera-based visual billing, barcode scanning, and multi-item POS cart.
+  - Catalog viewing with **backend-enforced cost-price masking** (cost prices and profit margins are completely omitted at serializer level).
+  - Restricted access: cannot view profit reports, alter cost prices, adjust stock arbitrarily, or manage shop settings.
   - Granular permissions: `can_confirm_bills` and `can_view_invoices` configured per worker.
 
 ### 3. Worker Management (Owner-Only)
-- Create and invite workers assigned directly to the owner's shop.
+- Create and assign workers directly to the owner's shop via `/api/auth/workers/`.
 - Toggle worker active/inactive status instantly (`is_worker_active`).
 - Grant or revoke permissions (`can_confirm_bills`, `can_view_invoices`).
-- Secure credential management: passwords hashed with PBKDF2/bcrypt; no plain-text secrets exposed.
+- Secure credential management: PBKDF2/bcrypt password hashing; no plain-text credentials exposed.
 
-### 4. Smart POS Billing & Loose Item Support
-- **Multi-Item Billing:** Scan branded items with computer vision or select from the catalog.
-- **Loose Items & Digital Scale Integration:** Calculate prices accurately based on per-kg weights (`WeightInputScreen`).
-- **Atomic Checkout (`transaction.atomic()`):** Stock levels decrease only upon successful invoice confirmation. Prevents race conditions and inventory drift.
-- **Instant Digital Invoices:** Real-time invoice generation with line items, tax breakdowns, and receipts.
+### 4. Smart POS Billing & Atomic Checkout
+- **Multi-Item Billing:** Scan items via computer vision, barcode scanner, or catalog picker.
+- **Loose Items & Digital Scale Integration:** Calculate prices accurately based on per-kg weights.
+- **Atomic Checkout (`transaction.atomic()`):** Stock levels decrease only upon successful invoice confirmation. Prevents inventory drift and race conditions.
+- **Real-Time Invoice Generation:** Line-item breakdown, tax calculation, and printable receipts.
 
 ### 5. Computer Vision Engine (`cv_engine/`)
 - Powered by **PyTorch** and **MobileNetV3** with **OpenCV**.
 - Produces 576-dimensional L2-normalized visual embeddings for cosine-similarity product matching.
-- Supports both branded product classification and candidate suggestion for unbranded/loose bagged items.
-- Interfaces with wireless **ESP32-CAM** video streams.
+- Supports branded product classification and candidate suggestion for unbranded/loose bagged items.
 
 ---
 
@@ -82,8 +91,9 @@ ShopGenie is a comprehensive, production-grade retail management and POS billing
 
 | Layer | Technologies |
 |---|---|
-| **Mobile Client** | Android (minSdk 24, targetSdk 36), Kotlin, Jetpack Compose, Material 3, ViewModel & StateFlow, Retrofit 2, Moshi, OkHttp 3/4, Coroutines |
-| **Backend API** | Python 3, Django 5.x, Django REST Framework (DRF), SimpleJWT, django-cors-headers, python-dotenv |
+| **Flutter App** | Dart 3.x, Flutter 3.x, Material 3, `http`, `intl`, `provider`, `camera` |
+| **Native Android App** | Kotlin, Jetpack Compose (M3), ViewModel, StateFlow, Retrofit 2, Moshi, OkHttp, Coroutines |
+| **Backend API** | Python 3.10+, Django 5.x, Django REST Framework (DRF), SimpleJWT, django-cors-headers |
 | **Database** | PostgreSQL / SQLite with atomic transactions |
 | **Vision & AI** | PyTorch, MobileNetV3 Large, OpenCV, NumPy, Pillow |
 
@@ -93,7 +103,15 @@ ShopGenie is a comprehensive, production-grade retail management and POS billing
 
 ```text
 ShopGenie/
-├── app/                                    # Native Android Application
+├── flutter_app/                            # Cross-Platform Flutter & Dart Application
+│   ├── pubspec.yaml                       # Flutter project manifest & dependencies
+│   ├── README.md                          # Flutter app setup & run guide
+│   └── lib/
+│       ├── main.dart                      # Flutter app entry point, M3 theme, Owner & Worker UI
+│       ├── models.dart                    # Dart models (Shop, User, Worker, Product, Invoice)
+│       └── api_service.dart               # REST client for Django backend with JWT & RBAC
+│
+├── app/                                    # Native Android Application (Jetpack Compose)
 │   ├── src/main/
 │   │   ├── java/com/example/
 │   │   │   ├── MainActivity.kt            # Edge-to-edge entry point & navigation
@@ -102,9 +120,9 @@ ShopGenie/
 │   │   │   │   ├── models/                # Moshi DTOs (Shop, User, Worker, Products)
 │   │   │   │   └── repository/            # ShopManager & CartManager singletons
 │   │   │   ├── ui/
-│   │   │   │   ├── navigation/            # Screen routes (MyShop, ManageWorkers, etc.)
+│   │   │   │   ├── navigation/            # Compose Navigation routes
 │   │   │   │   ├── screens/               # Compose screens:
-│   │   │   │   │   ├── HomeScreen.kt             # Owner Dashboard
+│   │   │   │   │   ├── HomeScreen.kt             # Owner Dashboard (Sales & Profit)
 │   │   │   │   │   ├── WorkerDashboardScreen.kt  # Worker Dashboard
 │   │   │   │   │   ├── MyShopScreen.kt           # Single-Shop Configuration
 │   │   │   │   │   ├── ManageWorkersScreen.kt    # Worker CRUD & Permissions
@@ -146,6 +164,67 @@ ShopGenie/
 ├── .env.example                           # Configuration templates
 └── README.md
 ```
+
+---
+
+## Quickstart & Setup Guide
+
+### 1. Running the Flutter & Dart Client
+
+To run the Flutter app on Android, iOS, or Web:
+
+```bash
+cd flutter_app
+flutter pub get
+flutter run
+```
+
+Configure the backend endpoint in `flutter_app/lib/api_service.dart` (defaults to `http://10.0.2.2:8000/api` for the Android emulator, or `http://localhost:8000/api` for Web/Desktop).
+
+### 2. Running the Django REST Backend
+
+1. Navigate to the backend directory:
+   ```bash
+   cd shopgenie/backend
+   ```
+
+2. Create and activate a Python virtual environment:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   ```
+
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Configure environment variables (`.env`):
+   ```env
+   DEBUG=True
+   SECRET_KEY=your-django-secret-key
+   ALLOWED_HOSTS=*
+   CORS_ALLOW_ALL_ORIGINS=True
+   ```
+
+5. Apply migrations:
+   ```bash
+   python manage.py migrate
+   ```
+
+6. Start the development server:
+   ```bash
+   python manage.py runserver 0.0.0.0:8000
+   ```
+
+### 3. Running the Native Android App
+
+1. Open the project root in **Android Studio**.
+2. Sync Gradle dependencies.
+3. Build and launch:
+   ```bash
+   gradle assembleDebug
+   ```
 
 ---
 
@@ -193,63 +272,7 @@ ShopGenie/
 
 ---
 
-## Setup & Getting Started
-
-### Prerequisites
-- **Android Development:** Android Studio Hedgehog or newer, JDK 17, Android SDK Platform 36.
-- **Backend Development:** Python 3.10+, PostgreSQL (or SQLite for development).
-
-### 1. Backend Setup (Django)
-
-1. Navigate to the backend directory:
-   ```bash
-   cd shopgenie/backend
-   ```
-
-2. Create and activate a Python virtual environment:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
-
-3. Install required dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Configure environment variables in a local `.env` file (see `.env.example`):
-   ```env
-   DEBUG=True
-   SECRET_KEY=your-django-secret-key
-   ALLOWED_HOSTS=*
-   CORS_ALLOW_ALL_ORIGINS=True
-   ```
-
-5. Run database migrations:
-   ```bash
-   python manage.py migrate
-   ```
-
-6. Start the development server:
-   ```bash
-   python manage.py runserver 0.0.0.0:8000
-   ```
-
-### 2. Android App Setup
-
-1. Open the project root in **Android Studio**.
-2. Let Gradle sync project dependencies.
-3. Configure the backend base URL in the app or via the in-app server address prompt on the login screen.
-4. Build and install on an Android device or emulator:
-   ```bash
-   gradle assembleDebug
-   ```
-
----
-
 ## Automated Verification & Tests
-
-The project includes test verification suites for automated quality assurance:
 
 - **Phase 1 Backend Verification:**
   ```bash
@@ -266,8 +289,8 @@ The project includes test verification suites for automated quality assurance:
 
 ---
 
-## Security Best Practices
+## Security & Tenant Isolation
 - **No Plain-text Credentials:** Passwords are never returned in API responses or logs.
 - **Strict Tenant Isolation:** All catalog, inventory, and billing queries are filtered strictly by the authenticated user's shop.
 - **Zero-Trust Worker Boundaries:** Workers attempting to access owner endpoints receive HTTP 403 Forbidden responses.
-- **Environment Confidentiality:** Production keys and database credentials must remain in `.env` and excluded from source control.
+- **Environment Confidentiality:** Production keys and database credentials remain in `.env` and excluded from version control.
