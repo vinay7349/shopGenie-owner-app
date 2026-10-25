@@ -26,7 +26,6 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   bool _obscurePassword = true;
   bool _isLoading = false;
   String? _errorMessage;
-  bool _isWorkerMode = false;
 
   late AnimationController _fadeController;
   late AnimationController _slideController;
@@ -36,7 +35,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   @override
   void initState() {
     super.initState();
-    _api = widget.apiService ?? ApiService();
+    _api = widget.apiService ?? ApiService(config: ApiConfig.emulator());
 
     _fadeController = AnimationController(
       duration: const Duration(milliseconds: 600),
@@ -90,19 +89,21 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       try {
         shop = await _api.getMyShop();
       } catch (_) {
-        shop = Shop(
-          id: res['shop_id'] ?? 1,
-          name: res['shop_name'] ?? 'My Store',
-          category: 'Grocery',
-        );
+        shop = null;
       }
 
+      final role = res['role'] as String? ?? res['user']?['role'] as String? ?? 'SHOP_OWNER';
+      final userData = res['user'] as Map<String, dynamic>? ?? res;
+
       final user = User(
-        id: res['user_id'] ?? res['user']?['id'] ?? 1,
+        id: userData['id'] as int? ?? res['user_id'] as int? ?? 1,
         username: username,
-        email: res['email'] ?? res['user']?['email'] ?? '$username@shopgenie.local',
-        role: res['role'] ?? res['user']?['role'] ?? (_isWorkerMode ? 'SHOP_WORKER' : 'SHOP_OWNER'),
+        email: userData['email'] as String? ?? res['email'] as String? ?? '$username@shopgenie.local',
+        role: role,
         shop: shop,
+        isWorkerActive: userData['is_worker_active'] as bool? ?? true,
+        canViewInvoices: userData['can_view_invoices'] as bool? ?? true,
+        canConfirmBills: userData['can_confirm_bills'] as bool? ?? true,
       );
 
       if (mounted) {
@@ -113,8 +114,12 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       if (mounted) {
         String msg = 'Invalid username or password. Please try again.';
         final errStr = e.toString();
-        if (errStr.contains('SocketException') || errStr.contains('Connection refused')) {
-          msg = 'Unable to connect to unified backend. Please verify network or API server.';
+        if (errStr.contains('SocketException') || errStr.contains('Connection refused') || errStr.contains('NETWORK_ERROR')) {
+          msg = 'Unable to connect to backend. Please verify network or API server.';
+        } else if (errStr.contains('SESSION_EXPIRED')) {
+          msg = 'Session expired. Please log in again.';
+        } else if (errStr.contains('403') || errStr.contains('FORBIDDEN')) {
+          msg = 'Access denied. Invalid credentials or insufficient permissions.';
         }
         setState(() {
           _errorMessage = msg;
@@ -309,12 +314,10 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                           ),
                         ),
                         const SizedBox(height: 10),
-                        Text(
-                          _isWorkerMode
-                              ? 'Sign in to access your staff dashboard'
-                              : 'Sign in to manage your Kirana store',
+                        const Text(
+                          'Sign in to manage your Kirana store',
                           textAlign: TextAlign.center,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 15,
                             color: AppTheme.textSecondary,
                             fontWeight: FontWeight.w400,
@@ -471,56 +474,30 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                                               color: Colors.white,
                                             ),
                                           )
-                                        : Text(
-                                            _isWorkerMode ? 'Sign In as Worker' : 'Sign In',
-                                            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, letterSpacing: 0.3),
+                                        : const Text(
+                                            'Sign In',
+                                            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, letterSpacing: 0.3),
                                           ),
                                   ),
                                 ),
                                 const SizedBox(height: 20),
 
-                                // Register Store & Worker Login options
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Flexible(
-                                      child: TextButton(
-                                        onPressed: _showRegisterStoreDialog,
-                                        style: TextButton.styleFrom(
-                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-                                        ),
-                                        child: const Text(
-                                          'Register Store',
-                                          style: TextStyle(
-                                            color: AppTheme.primaryGreen,
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 14,
-                                          ),
-                                        ),
+                                // Register Store option
+                                Center(
+                                  child: TextButton(
+                                    onPressed: _showRegisterStoreDialog,
+                                    style: TextButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                                    ),
+                                    child: const Text(
+                                      'Register New Store',
+                                      style: TextStyle(
+                                        color: AppTheme.primaryGreen,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 14,
                                       ),
                                     ),
-                                    Flexible(
-                                      child: TextButton(
-                                        onPressed: () {
-                                          setState(() {
-                                            _isWorkerMode = !_isWorkerMode;
-                                            _errorMessage = null;
-                                          });
-                                        },
-                                        style: TextButton.styleFrom(
-                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-                                        ),
-                                        child: Text(
-                                          _isWorkerMode ? 'Owner Login' : 'Worker Login',
-                                          style: const TextStyle(
-                                            color: AppTheme.textSecondary,
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                    ),
-                                    ),
-                                  ],
+                                  ),
                                 ),
                               ],
                             ),
@@ -528,41 +505,10 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                         ),
                         const SizedBox(height: 28),
 
-                        // Divider
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Divider(
-                                color: AppTheme.cardBorder.withValues(alpha: 0.5),
-                                thickness: 1.5,
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16),
-                              child: Text(
-                                'OR',
-                                style: TextStyle(
-                                  color: AppTheme.textMuted,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 1.2,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: Divider(
-                                color: AppTheme.cardBorder.withValues(alpha: 0.5),
-                                thickness: 1.5,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 24),
-
                         // Connection status info
                         Center(
                           child: Text(
-                            'Unified Backend: ${ApiService.baseUrl}',
+                            'API: ${_api.baseUrl}',
                             style: const TextStyle(
                               fontSize: 11,
                               color: AppTheme.textMuted,

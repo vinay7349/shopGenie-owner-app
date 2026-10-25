@@ -7,6 +7,7 @@ import 'package:shopgenie_flutter/main.dart';
 import 'package:shopgenie_flutter/models.dart';
 import 'package:shopgenie_flutter/screens/offer_screen.dart';
 import 'package:shopgenie_flutter/screens/announcement_screen.dart';
+import 'package:shopgenie_flutter/services/token_storage.dart';
 
 class MockHttpClient extends http.BaseClient {
   final Future<http.StreamedResponse> Function(http.BaseRequest request) handler;
@@ -17,6 +18,32 @@ class MockHttpClient extends http.BaseClient {
   Future<http.StreamedResponse> send(http.BaseRequest request) {
     return handler(request);
   }
+}
+
+class MockTokenStorage extends TokenStorage {
+  String? _accessToken;
+  String? _refreshToken;
+
+  @override
+  Future<void> saveTokens({required String accessToken, required String refreshToken}) async {
+    _accessToken = accessToken;
+    _refreshToken = refreshToken;
+  }
+
+  @override
+  Future<String?> getAccessToken() async => _accessToken;
+
+  @override
+  Future<String?> getRefreshToken() async => _refreshToken;
+
+  @override
+  Future<void> clearTokens() async {
+    _accessToken = null;
+    _refreshToken = null;
+  }
+
+  @override
+  Future<bool> hasTokens() async => _accessToken != null && _refreshToken != null;
 }
 
 http.StreamedResponse _jsonRes(Object body, int code) {
@@ -173,9 +200,9 @@ void main() {
     test('login stores access token', () async {
       final client = MockHttpClient((req) async {
         expect(req.url.path, '/api/auth/login/');
-        return _jsonRes({'access': 'token_xyz123', 'role': 'SHOP_OWNER'}, 200);
+        return _jsonRes({'access': 'token_xyz123', 'refresh': 'refresh_xyz123', 'role': 'SHOP_OWNER'}, 200);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       final res = await api.login('owner1', 'pass123');
       expect(res['role'], 'SHOP_OWNER');
       expect(api.token, 'token_xyz123');
@@ -191,7 +218,7 @@ void main() {
           'today_sales': 2500.0,
         }, 200);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       final d = await api.getDashboard();
       expect(d.shopName, 'Balaji Kirana');
       expect(d.totalProducts, 20);
@@ -208,7 +235,7 @@ void main() {
         expect(body['items'].first['quantity'], '2.0');
         return _jsonRes({'id': 101, 'status': 'ISSUED', 'total_amount': '280.00'}, 201);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       final p = Product(id: 1, name: 'Rice', sellingPrice: 140.0, stockQuantity: 20.0, unit: 'pc', mrp: 150.0, category: 'Rice', description: '', imageUrl: '', status: 'PUBLISHED');
       final res = await api.confirmBill(
         items: [InvoiceItem(product: p, quantity: 2.0, price: 140.0)],
@@ -228,7 +255,7 @@ void main() {
           ]
         }, 200);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       final prods = await api.getProducts();
       expect(prods.length, 1);
       expect(prods.first.name, 'Moong Dal');
@@ -292,7 +319,7 @@ void main() {
           ]
         }, 200);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       final offers = await api.getOffers();
       expect(offers.length, 2);
       expect(offers.first.title, 'Summer Sale');
@@ -327,7 +354,7 @@ void main() {
           'updated_at': '2026-10-01T00:00:00Z',
         }, 201);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       final offer = await api.createOffer({
         'title': 'New Offer',
         'discount_type': 'PERCENTAGE',
@@ -362,7 +389,7 @@ void main() {
           'updated_at': '2026-10-01T00:00:00Z',
         }, 200);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       final offer = await api.updateOffer(5, {'title': 'Updated Offer', 'discount_type': 'FIXED', 'discount_value': 25.0, 'is_active': false});
       expect(offer.id, 5);
       expect(offer.title, 'Updated Offer');
@@ -375,7 +402,7 @@ void main() {
         expect(req.method, 'DELETE');
         return _jsonRes({}, 204);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       await api.deleteOffer(7);
       expect(true, isTrue); // No exception means success
     });
@@ -391,7 +418,7 @@ void main() {
           ]
         }, 200);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       final announcements = await api.getAnnouncements();
       expect(announcements.length, 2);
       expect(announcements.first.title, 'New Stock');
@@ -417,7 +444,7 @@ test('createAnnouncement sends correct payload', () async {
           'updated_at': '2026-10-23T08:00:00Z',
         }, 201);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       final announcement = await api.createAnnouncement({
         'title': 'New Announcement',
         'content': 'Test content',
@@ -443,7 +470,7 @@ test('createAnnouncement sends correct payload', () async {
           'updated_at': '2026-10-23T08:00:00Z',
         }, 200);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       final announcement = await api.updateAnnouncement(3, {'title': 'Updated Announcement', 'status': 'ARCHIVED'});
       expect(announcement.id, 3);
       expect(announcement.status, 'ARCHIVED');
@@ -455,7 +482,7 @@ test('createAnnouncement sends correct payload', () async {
         expect(req.method, 'DELETE');
         return _jsonRes({}, 204);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       await api.deleteAnnouncement(9);
       expect(true, isTrue);
     });
@@ -512,7 +539,7 @@ test('createAnnouncement sends correct payload', () async {
           ]
         }, 200);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       final workers = await api.getWorkers();
       expect(workers.length, 2);
       expect(workers.first.username, 'worker_raj');
@@ -545,7 +572,7 @@ test('createAnnouncement sends correct payload', () async {
           'date_joined': '2026-10-01T00:00:00Z',
         }, 201);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       final worker = await api.createWorker({
         'username': 'new_worker',
         'email': 'new@shopgenie.local',
@@ -578,7 +605,7 @@ test('createAnnouncement sends correct payload', () async {
           'date_joined': '2026-01-01T00:00:00Z',
         }, 200);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       final worker = await api.updateWorker(5, {'is_worker_active': false, 'can_view_invoices': true, 'can_confirm_bills': false});
       expect(worker.id, 5);
       expect(worker.isWorkerActive, isFalse);
@@ -591,7 +618,7 @@ test('createAnnouncement sends correct payload', () async {
         expect(req.method, 'DELETE');
         return _jsonRes({}, 204);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client, tokenStorage: MockTokenStorage());
       await api.deleteWorker(7);
       expect(true, isTrue);
     });

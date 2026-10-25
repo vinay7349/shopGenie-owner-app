@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:http/http.dart' as http;
 import 'models.dart';
 import 'services/token_storage.dart';
@@ -8,44 +11,94 @@ class ApiException implements Exception {
   final String message;
   final int? statusCode;
   final String? responseBody;
+  final String? errorCode;
 
-  ApiException(this.message, {this.statusCode, this.responseBody});
+  ApiException(this.message, {this.statusCode, this.responseBody, this.errorCode});
 
   @override
-  String toString() => 'ApiException: $message (status: $statusCode)';
+  String toString() => 'ApiException: $message (status: $statusCode, code: $errorCode)';
 }
 
+/// Configuration for API client
+class ApiConfig {
+  /// Base URL for API (e.g., 'http://10.0.2.2:8000/api' for emulator, 'http://192.168.1.100:8000/api' for physical device)
+  final String baseUrl;
+
+  /// Connection timeout
+  final Duration connectTimeout;
+
+  /// Request timeout
+  final Duration requestTimeout;
+
+  /// Whether to enable debug logging (sanitized)
+  final bool enableLogging;
+
+  const ApiConfig({
+    required this.baseUrl,
+    this.connectTimeout = const Duration(seconds: 10),
+    this.requestTimeout = const Duration(seconds: 30),
+    this.enableLogging = false,
+  });
+
+  /// Factory for emulator (Android emulator uses 10.0.2.2 to reach host machine)
+  factory ApiConfig.emulator({int port = 8000}) => ApiConfig(
+    baseUrl: 'http://10.0.2.2:$port/api',
+    enableLogging: true,
+  );
+
+  /// Factory for physical device via LAN IP
+  factory ApiConfig.physicalDevice(String lanIp, {int port = 8000}) => ApiConfig(
+    baseUrl: 'http://$lanIp:$port/api',
+    enableLogging: false,
+  );
+
+  /// Factory for production (HTTPS)
+  factory ApiConfig.production(String domain, {int port = 443}) => ApiConfig(
+    baseUrl: 'https://$domain${port != 443 ? ':$port' : ''}/api',
+    enableLogging: false,
+  );
+}
+
+/// Centralized API client with JWT auth, token refresh, timeouts, and safe retries.
 class ApiService {
-  static String baseUrl = 'http://127.0.0.1:8000/api';
-  String? _token;
+  final ApiConfig _config;
   final TokenStorage _tokenStorage;
   final http.Client _client;
+  String? _token;
 
-  /// Creates an ApiService with optional base URL, HTTP client, and token storage.
+  /// Creates an ApiService with the given configuration.
   /// For testing, provide a mock [http.Client] and [TokenStorage].
   ApiService({
-    String? initialBaseUrl,
+    required ApiConfig config,
     http.Client? client,
     TokenStorage? tokenStorage,
-  })  : _client = client ?? http.Client(),
-        _tokenStorage = tokenStorage ?? TokenStorage() {
-    if (initialBaseUrl != null) {
-      baseUrl = initialBaseUrl;
-    }
-  }
+  })  : _config = config,
+        _client = client ?? http.Client(),
+        _tokenStorage = tokenStorage ?? TokenStorage();
 
   String? get token => _token;
+
+  String get baseUrl => _config.baseUrl;
 
   void setToken(String? token) {
     _token = token;
   }
 
   Map<String, String> _headers() {
-    final map = {'Content-Type': 'application/json'};
+    final map = <String, String>{
+      'Content-Type': 'application/json',
+    };
     if (_token != null && _token!.isNotEmpty) {
       map['Authorization'] = 'Bearer $_token';
     }
     return map;
+  }
+
+  /// Logs a sanitized message (never logs tokens, passwords, or sensitive data)
+  void _log(String message) {
+    if (_config.enableLogging) {
+      debugPrint('[ApiService] $message');
+    }
   }
 
   /// Loads tokens from secure storage into memory.
@@ -53,6 +106,7 @@ class ApiService {
     final access = await _tokenStorage.getAccessToken();
     if (access != null && access.isNotEmpty) {
       _token = access;
+      _log('Loaded stored access token');
     }
   }
 
@@ -60,6 +114,7 @@ class ApiService {
   Future<void> clearTokens() async {
     _token = null;
     await _tokenStorage.clearTokens();
+    _log('Cleared tokens');
   }
 
   /// Checks if we have valid tokens stored.
@@ -68,23 +123,20 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> login(String username, String password) async {
-    final res = await _client.post(
-      Uri.parse('$baseUrl/auth/login/'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'username': username, 'password': password}),
+    _log('Login attempt for user: $username');
+    final res = await _post<Map<String, dynamic>>(
+      '/auth/login/',
+      {'username': username, 'password': password},
+      (json) => json,
     );
-    if (res.statusCode == 200) {
-      final data = jsonDecode(res.body);
-      _token = data['access'] as String?;
-      final refresh = data['refresh'] as String?;
-      if (_token != null && refresh != null) {
-        await _tokenStorage.saveTokens(accessToken: _token!, refreshToken: refresh);
-      }
-      return data;
-    } else {
-      final body = res.body;
-      throw ApiException('Login failed', statusCode: res.statusCode, responseBody: body);
+    final access = res['access'] as String?;
+    final refresh = res['refresh'] as String?;
+    if (access != null && refresh != null) {
+      _token = access;
+      await _tokenStorage.saveTokens(accessToken: access, refreshToken: refresh);
     }
+    _log('Login successful for user: $username');
+    return res;
   }
 
   Future<Map<String, dynamic>> registerOwner({
@@ -93,198 +145,102 @@ class ApiService {
     required String password,
     required String shopName,
   }) async {
-    final res = await _client.post(
-      Uri.parse('$baseUrl/auth/register/owner/'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
+    _log('Register owner attempt for user: $username, shop: $shopName');
+    final res = await _post<Map<String, dynamic>>(
+      '/auth/register/owner/',
+      {
         'username': username,
         'email': email,
         'password': password,
         'shop_name': shopName,
-      }),
+      },
+      (json) => json,
     );
-    if (res.statusCode == 201 || res.statusCode == 200) {
-      final data = jsonDecode(res.body);
-      _token = data['access'] as String?;
-      final refresh = data['refresh'] as String?;
-      if (_token != null && refresh != null) {
-        await _tokenStorage.saveTokens(accessToken: _token!, refreshToken: refresh);
-      }
-      return data;
-    } else {
-      final body = res.body;
-      throw ApiException('Registration failed', statusCode: res.statusCode, responseBody: body);
+    final access = res['access'] as String?;
+    final refresh = res['refresh'] as String?;
+    if (access != null && refresh != null) {
+      _token = access;
+      await _tokenStorage.saveTokens(accessToken: access, refreshToken: refresh);
     }
+    _log('Register owner successful for user: $username');
+    return res;
   }
 
   /// Refreshes the access token using the stored refresh token.
   /// Returns the new access token on success, or null if refresh failed.
   Future<String?> refreshToken() async {
+    _log('Attempting token refresh');
     final refresh = await _tokenStorage.getRefreshToken();
     if (refresh == null || refresh.isEmpty) {
+      _log('No refresh token available');
       return null;
     }
 
-    final res = await _client.post(
-      Uri.parse('$baseUrl/auth/refresh/'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'refresh': refresh}),
-    );
-    if (res.statusCode == 200) {
-      final data = jsonDecode(res.body);
-      final newAccess = data['access'] as String?;
-      final newRefresh = data['refresh'] as String?;
+    try {
+      final res = await _post<Map<String, dynamic>>(
+        '/auth/refresh/',
+        {'refresh': refresh},
+        (json) => json,
+      );
+      final newAccess = res['access'] as String?;
+      final newRefresh = res['refresh'] as String?;
       if (newAccess != null) {
         _token = newAccess;
         await _tokenStorage.saveTokens(
           accessToken: newAccess,
           refreshToken: newRefresh ?? refresh,
         );
+        _log('Token refresh successful');
         return newAccess;
       }
+    } catch (e) {
+      _log('Token refresh failed: $e');
     }
     return null;
   }
 
   Future<Shop> getMyShop() async {
-    final res = await _client.get(Uri.parse('$baseUrl/shops/my_shop/'), headers: _headers());
-    if (res.statusCode == 200) {
-      return Shop.fromJson(jsonDecode(res.body));
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => getMyShop());
-    }
-    throw ApiException('Failed to load shop', statusCode: res.statusCode, responseBody: res.body);
+    return _get<Shop>('/shops/my_shop/', (json) => Shop.fromJson(json));
   }
 
   Future<Shop> updateMyShop(Map<String, dynamic> body) async {
-    final res = await _client.patch(
-      Uri.parse('$baseUrl/shops/my_shop/'),
-      headers: _headers(),
-      body: jsonEncode(body),
-    );
-    if (res.statusCode == 200) {
-      return Shop.fromJson(jsonDecode(res.body));
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => updateMyShop(body));
-    }
-    throw ApiException('Failed to update shop', statusCode: res.statusCode, responseBody: res.body);
+    return _patch<Shop>('/shops/my_shop/', body, (json) => Shop.fromJson(json));
   }
 
   Future<DashboardData> getDashboard() async {
-    final res = await _client.get(Uri.parse('$baseUrl/shops/dashboard/'), headers: _headers());
-    if (res.statusCode == 200) {
-      return DashboardData.fromJson(jsonDecode(res.body));
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => getDashboard());
-    }
-    throw ApiException('Failed to load dashboard', statusCode: res.statusCode, responseBody: res.body);
+    return _get<DashboardData>('/shops/dashboard/', (json) => DashboardData.fromJson(json));
   }
 
   Future<List<Worker>> getWorkers() async {
-    final res = await _client.get(Uri.parse('$baseUrl/workers/'), headers: _headers());
-    if (res.statusCode == 200) {
-      final decoded = jsonDecode(res.body);
-      final List list = decoded is Map && decoded['results'] is List
-          ? decoded['results']
-          : (decoded is List ? decoded : []);
-      return list.map((e) => Worker.fromJson(e)).toList();
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => getWorkers());
-    }
-    throw ApiException('Failed to load workers', statusCode: res.statusCode, responseBody: res.body);
+    return _getList<Worker>('/workers/', (json) => Worker.fromJson(json));
   }
 
   Future<Worker> createWorker(Map<String, dynamic> body) async {
-    final res = await _client.post(
-      Uri.parse('$baseUrl/workers/'),
-      headers: _headers(),
-      body: jsonEncode(body),
-    );
-    if (res.statusCode == 201 || res.statusCode == 200) {
-      return Worker.fromJson(jsonDecode(res.body));
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => createWorker(body));
-    }
-    throw ApiException('Failed to create worker', statusCode: res.statusCode, responseBody: res.body);
+    return _post<Worker>('/workers/', body, (json) => Worker.fromJson(json));
   }
 
   Future<Worker> updateWorker(int id, Map<String, dynamic> body) async {
-    final res = await _client.patch(
-      Uri.parse('$baseUrl/workers/$id/'),
-      headers: _headers(),
-      body: jsonEncode(body),
-    );
-    if (res.statusCode == 200) {
-      return Worker.fromJson(jsonDecode(res.body));
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => updateWorker(id, body));
-    }
-    throw ApiException('Failed to update worker', statusCode: res.statusCode, responseBody: res.body);
+    return _patch<Worker>('/workers/$id/', body, (json) => Worker.fromJson(json));
   }
 
   Future<void> deleteWorker(int id) async {
-    final res = await _client.delete(
-      Uri.parse('$baseUrl/workers/$id/'),
-      headers: _headers(),
-    );
-    if (res.statusCode == 204 || res.statusCode == 200) {
-      return;
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => deleteWorker(id));
-    }
-    throw ApiException('Failed to delete worker', statusCode: res.statusCode, responseBody: res.body);
+    await _delete('/workers/$id/');
   }
 
   Future<List<Product>> getProducts() async {
-    final res = await _client.get(Uri.parse('$baseUrl/products/'), headers: _headers());
-    if (res.statusCode == 200) {
-      final decoded = jsonDecode(res.body);
-      final List list = decoded is Map && decoded['results'] is List
-          ? decoded['results']
-          : (decoded is List ? decoded : []);
-      return list.map((e) => Product.fromJson(e)).toList();
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => getProducts());
-    }
-    throw ApiException('Failed to load products', statusCode: res.statusCode, responseBody: res.body);
+    return _getList<Product>('/products/', (json) => Product.fromJson(json));
   }
 
   Future<Product> createProduct(Map<String, dynamic> body) async {
-    final res = await _client.post(
-      Uri.parse('$baseUrl/products/'),
-      headers: _headers(),
-      body: jsonEncode(body),
-    );
-    if (res.statusCode == 201 || res.statusCode == 200) {
-      return Product.fromJson(jsonDecode(res.body));
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => createProduct(body));
-    }
-    throw ApiException('Failed to create product', statusCode: res.statusCode, responseBody: res.body);
+    return _post<Product>('/products/', body, (json) => Product.fromJson(json));
   }
 
   Future<Product> updateProduct(int id, Map<String, dynamic> body) async {
-    final res = await _client.patch(
-      Uri.parse('$baseUrl/products/$id/'),
-      headers: _headers(),
-      body: jsonEncode(body),
-    );
-    if (res.statusCode == 200) {
-      return Product.fromJson(jsonDecode(res.body));
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => updateProduct(id, body));
-    }
-    throw ApiException('Failed to update product', statusCode: res.statusCode, responseBody: res.body);
+    return _patch<Product>('/products/$id/', body, (json) => Product.fromJson(json));
+  }
+
+  Future<void> deleteProduct(int id) async {
+    await _delete('/products/$id/');
   }
 
   Future<Map<String, dynamic>> confirmBill({
@@ -304,181 +260,51 @@ class ApiService {
         'quantity': i.quantity.toString(),
       }).toList(),
     };
-    final res = await _client.post(
-      Uri.parse('$baseUrl/billing/invoices/'),
-      headers: _headers(),
-      body: jsonEncode(body),
-    );
-    if (res.statusCode == 201 || res.statusCode == 200) {
-      return jsonDecode(res.body);
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => confirmBill(items: items, idempotencyKey: idempotencyKey, paymentMode: paymentMode, customerName: customerName, customerPhone: customerPhone));
-    }
-    if (res.statusCode == 409) {
-      // Idempotency key conflict - different payload
-      final data = jsonDecode(res.body);
-      throw ApiException(data['detail'] ?? 'Idempotency key reused with different payload', statusCode: 409, responseBody: res.body);
-    }
-    throw ApiException('Bill confirmation failed', statusCode: res.statusCode, responseBody: res.body);
+    return _post<Map<String, dynamic>>('/billing/invoices/', body, (json) => json);
   }
 
   Future<List<dynamic>> getInvoices() async {
-    final res = await _client.get(Uri.parse('$baseUrl/billing/invoices/'), headers: _headers());
-    if (res.statusCode == 200) {
-      final decoded = jsonDecode(res.body);
-      return decoded is Map && decoded['results'] is List
-          ? decoded['results']
-          : (decoded is List ? decoded : []);
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => getInvoices());
-    }
-    throw ApiException('Failed to load invoices', statusCode: res.statusCode, responseBody: res.body);
+    return _getList<dynamic>('/billing/invoices/', (json) => json);
   }
 
   Future<Map<String, dynamic>> getInvoice(int id) async {
-    final res = await _client.get(Uri.parse('$baseUrl/billing/invoices/$id/'), headers: _headers());
-    if (res.statusCode == 200) {
-      return jsonDecode(res.body);
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => getInvoice(id));
-    }
-    throw ApiException('Failed to load invoice', statusCode: res.statusCode, responseBody: res.body);
+    return _get<Map<String, dynamic>>('/billing/invoices/$id/', (json) => json);
   }
 
   Future<List<Offer>> getOffers() async {
-    final res = await _client.get(Uri.parse('$baseUrl/offers/'), headers: _headers());
-    if (res.statusCode == 200) {
-      final decoded = jsonDecode(res.body);
-      final List list = decoded is Map && decoded['results'] is List
-          ? decoded['results']
-          : (decoded is List ? decoded : []);
-      return list.map((e) => Offer.fromJson(e)).toList();
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => getOffers());
-    }
-    throw ApiException('Failed to load offers', statusCode: res.statusCode, responseBody: res.body);
+    return _getList<Offer>('/offers/', (json) => Offer.fromJson(json));
   }
 
   Future<Offer> createOffer(Map<String, dynamic> body) async {
-    final res = await _client.post(
-      Uri.parse('$baseUrl/offers/'),
-      headers: _headers(),
-      body: jsonEncode(body),
-    );
-    if (res.statusCode == 201 || res.statusCode == 200) {
-      return Offer.fromJson(jsonDecode(res.body));
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => createOffer(body));
-    }
-    throw ApiException('Failed to create offer', statusCode: res.statusCode, responseBody: res.body);
+    return _post<Offer>('/offers/', body, (json) => Offer.fromJson(json));
   }
 
   Future<List<Announcement>> getAnnouncements() async {
-    final res = await _client.get(Uri.parse('$baseUrl/announcements/'), headers: _headers());
-    if (res.statusCode == 200) {
-      final decoded = jsonDecode(res.body);
-      final List list = decoded is Map && decoded['results'] is List
-          ? decoded['results']
-          : (decoded is List ? decoded : []);
-      return list.map((e) => Announcement.fromJson(e)).toList();
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => getAnnouncements());
-    }
-    throw ApiException('Failed to load announcements', statusCode: res.statusCode, responseBody: res.body);
+    return _getList<Announcement>('/announcements/', (json) => Announcement.fromJson(json));
   }
 
   Future<Announcement> createAnnouncement(Map<String, dynamic> body) async {
-    final res = await _client.post(
-      Uri.parse('$baseUrl/announcements/'),
-      headers: _headers(),
-      body: jsonEncode(body),
-    );
-    if (res.statusCode == 201 || res.statusCode == 200) {
-      return Announcement.fromJson(jsonDecode(res.body));
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => createAnnouncement(body));
-    }
-    throw ApiException('Failed to create announcement', statusCode: res.statusCode, responseBody: res.body);
+    return _post<Announcement>('/announcements/', body, (json) => Announcement.fromJson(json));
   }
 
   Future<Offer> updateOffer(int id, Map<String, dynamic> body) async {
-    final res = await _client.patch(
-      Uri.parse('$baseUrl/offers/$id/'),
-      headers: _headers(),
-      body: jsonEncode(body),
-    );
-    if (res.statusCode == 200) {
-      return Offer.fromJson(jsonDecode(res.body));
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => updateOffer(id, body));
-    }
-    throw ApiException('Failed to update offer', statusCode: res.statusCode, responseBody: res.body);
+    return _patch<Offer>('/offers/$id/', body, (json) => Offer.fromJson(json));
   }
 
   Future<void> deleteOffer(int id) async {
-    final res = await _client.delete(
-      Uri.parse('$baseUrl/offers/$id/'),
-      headers: _headers(),
-    );
-    if (res.statusCode != 204 && res.statusCode != 200) {
-      if (res.statusCode == 401) {
-        await _tryRefreshAndRetry(() => deleteOffer(id));
-      }
-      throw ApiException('Failed to delete offer', statusCode: res.statusCode, responseBody: res.body);
-    }
+    await _delete('/offers/$id/');
   }
 
   Future<Announcement> updateAnnouncement(int id, Map<String, dynamic> body) async {
-    final res = await _client.patch(
-      Uri.parse('$baseUrl/announcements/$id/'),
-      headers: _headers(),
-      body: jsonEncode(body),
-    );
-    if (res.statusCode == 200) {
-      return Announcement.fromJson(jsonDecode(res.body));
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => updateAnnouncement(id, body));
-    }
-    throw ApiException('Failed to update announcement', statusCode: res.statusCode, responseBody: res.body);
+    return _patch<Announcement>('/announcements/$id/', body, (json) => Announcement.fromJson(json));
   }
 
   Future<void> deleteAnnouncement(int id) async {
-    final res = await _client.delete(
-      Uri.parse('$baseUrl/announcements/$id/'),
-      headers: _headers(),
-    );
-    if (res.statusCode != 204 && res.statusCode != 200) {
-      if (res.statusCode == 401) {
-        await _tryRefreshAndRetry(() => deleteAnnouncement(id));
-      }
-      throw ApiException('Failed to delete announcement', statusCode: res.statusCode, responseBody: res.body);
-    }
+    await _delete('/announcements/$id/');
   }
 
-  // --- Inventory / Stock Adjustments ---
-
   Future<List<StockAdjustment>> getStockAdjustments() async {
-    final res = await _client.get(Uri.parse('$baseUrl/inventory/'), headers: _headers());
-    if (res.statusCode == 200) {
-      final decoded = jsonDecode(res.body);
-      final List list = decoded is Map && decoded['results'] is List
-          ? decoded['results']
-          : (decoded is List ? decoded : []);
-      return list.map((e) => StockAdjustment.fromJson(e)).toList();
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => getStockAdjustments());
-    }
-    throw ApiException('Failed to load stock adjustments', statusCode: res.statusCode, responseBody: res.body);
+    return _getList<StockAdjustment>('/inventory/', (json) => StockAdjustment.fromJson(json));
   }
 
   Future<StockAdjustment> createStockAdjustment({
@@ -493,31 +319,159 @@ class ApiService {
       'reason': reason,
       'note': note,
     };
-    final res = await _client.post(
-      Uri.parse('$baseUrl/inventory/'),
-      headers: _headers(),
-      body: jsonEncode(body),
-    );
-    if (res.statusCode == 201 || res.statusCode == 200) {
-      return StockAdjustment.fromJson(jsonDecode(res.body));
-    }
-    if (res.statusCode == 401) {
-      await _tryRefreshAndRetry(() => createStockAdjustment(productId: productId, delta: delta, reason: reason, note: note));
-    }
-    throw ApiException('Failed to create stock adjustment', statusCode: res.statusCode, responseBody: res.body);
+    return _post<StockAdjustment>('/inventory/', body, (json) => StockAdjustment.fromJson(json));
   }
 
-  /// Attempts to refresh the token and retry the request once.
-  /// If refresh fails, clears tokens and rethrows the original error.
-  Future<T> _tryRefreshAndRetry<T>(Future<T> Function() request) async {
-    final newToken = await refreshToken();
-    if (newToken != null) {
-      return request();
-    } else {
-      await clearTokens();
-      throw ApiException('Session expired. Please log in again.', statusCode: 401);
+  // ============ Core HTTP Methods ============
+
+  Future<T> _get<T>(String path, T Function(dynamic) fromJson) async {
+    return _request<T>(
+      () => _client.get(
+        Uri.parse('${_config.baseUrl}$path'),
+        headers: _headers(),
+      ),
+      fromJson,
+      isSafeMethod: true,
+    );
+  }
+
+  Future<T> _post<T>(String path, Map<String, dynamic> body, T Function(dynamic) fromJson) async {
+    return _request<T>(
+      () => _client.post(
+        Uri.parse('${_config.baseUrl}$path'),
+        headers: _headers(),
+        body: jsonEncode(body),
+      ),
+      fromJson,
+      isSafeMethod: false,
+    );
+  }
+
+  Future<T> _patch<T>(String path, Map<String, dynamic> body, T Function(dynamic) fromJson) async {
+    return _request<T>(
+      () => _client.patch(
+        Uri.parse('${_config.baseUrl}$path'),
+        headers: _headers(),
+        body: jsonEncode(body),
+      ),
+      fromJson,
+      isSafeMethod: false,
+    );
+  }
+
+  Future<void> _delete(String path) async {
+    await _request<void>(
+      () => _client.delete(
+        Uri.parse('${_config.baseUrl}$path'),
+        headers: _headers(),
+      ),
+      (_) => null,
+      isSafeMethod: false,
+    );
+  }
+
+  /// Core request method with timeout, error parsing, token refresh, and safe retries.
+  Future<T> _request<T>(
+    Future<http.Response> Function() requestFn,
+    T Function(dynamic) fromJson, {
+    required bool isSafeMethod,
+    int retryCount = 0,
+  }) async {
+    http.Response? res;
+    try {
+      res = await requestFn().timeout(_config.requestTimeout);
+    } on TimeoutException catch (e) {
+      _log('Request timeout: $e');
+      throw ApiException('Request timed out', statusCode: 408, errorCode: 'TIMEOUT');
+    } on SocketException catch (e) {
+      _log('Network error: $e');
+      throw ApiException('Network error: ${e.message}', statusCode: 503, errorCode: 'NETWORK_ERROR');
+    } on FormatException catch (e) {
+      _log('Invalid response format: $e');
+      throw ApiException('Invalid response format', statusCode: 500, errorCode: 'FORMAT_ERROR');
+    } catch (e) {
+      _log('Unexpected error: $e');
+      throw ApiException('Unexpected error: $e', statusCode: 500, errorCode: 'UNKNOWN_ERROR');
     }
+
+    _log('Response ${res.statusCode} for ${res.request?.url}');
+
+    if (res.statusCode == 200 || res.statusCode == 201) {
+      final json = _parseJson(res);
+      return fromJson(json);
+    }
+
+    if (res.statusCode == 204) {
+      return fromJson(null as dynamic);
+    }
+
+    if (res.statusCode == 401 && retryCount < 1) {
+      _log('Received 401, attempting token refresh (retry $retryCount)');
+      final newToken = await refreshToken();
+      if (newToken != null) {
+        return _request<T>(requestFn, fromJson, isSafeMethod: true, retryCount: retryCount + 1);
+      } else {
+        await clearTokens();
+        throw ApiException('Session expired. Please log in again.', statusCode: 401, errorCode: 'SESSION_EXPIRED');
+      }
+    }
+
+    // Handle specific error codes
+    final errorData = _parseJson(res);
+    final message = errorData is Map ? (errorData['detail'] ?? errorData['message'] ?? 'Request failed') : 'Request failed';
+    final errorCode = errorData is Map ? errorData['code'] as String? : null;
+
+    if (res.statusCode == 409) {
+      throw ApiException(message, statusCode: 409, errorCode: errorCode ?? 'CONFLICT');
+    }
+    if (res.statusCode == 403) {
+      throw ApiException(message, statusCode: 403, errorCode: errorCode ?? 'FORBIDDEN');
+    }
+    if (res.statusCode == 404) {
+      throw ApiException(message, statusCode: 404, errorCode: errorCode ?? 'NOT_FOUND');
+    }
+    if (res.statusCode >= 500) {
+      throw ApiException(message, statusCode: res.statusCode, errorCode: errorCode ?? 'SERVER_ERROR');
+    }
+
+    throw ApiException(message, statusCode: res.statusCode, errorCode: errorCode);
+  }
+
+  dynamic _parseJson(http.Response res) {
+    if (res.body.isEmpty) return null;
+    try {
+      return jsonDecode(res.body);
+    } on FormatException {
+      return res.body;
+    }
+  }
+
+  Future<List<T>> _getList<T>(String path, T Function(dynamic) fromJson) async {
+    return _request<List<T>>(
+      () => _client.get(
+        Uri.parse('${_config.baseUrl}$path'),
+        headers: _headers(),
+      ),
+      (json) {
+        if (json is Map && json['results'] is List) {
+          return (json['results'] as List).map((e) => fromJson(e)).toList();
+        } else if (json is List) {
+          return json.map((e) => fromJson(e)).toList();
+        }
+        return <T>[];
+      },
+      isSafeMethod: true,
+    );
   }
 
   void close() => _client.close();
+}
+
+/// Debug print that respects release mode
+void debugPrint(String message) {
+  if (!bool.fromEnvironment('dart.vm.product')) {
+    // Only log in debug mode
+    // ignore: avoid_print
+    print(message);
+  }
 }

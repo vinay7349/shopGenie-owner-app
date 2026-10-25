@@ -29,7 +29,7 @@ http.StreamedResponse _jsonRes(Object body, int code) {
 }
 
 void _setTestViewport(WidgetTester tester) {
-  tester.binding.window.physicalSizeTestValue = const Size(440, 900);
+  tester.binding.window.physicalSizeTestValue = const Size(440, 1000);
   tester.binding.window.devicePixelRatioTestValue = 1.0;
 }
 
@@ -61,8 +61,7 @@ void main() {
       expect(find.widgetWithText(TextFormField, 'Username'), findsOneWidget);
       expect(find.widgetWithText(TextFormField, 'Password'), findsOneWidget);
       expect(find.widgetWithText(ElevatedButton, 'Sign In'), findsOneWidget);
-      expect(find.text('Register Store'), findsOneWidget);
-      expect(find.text('Worker Login'), findsOneWidget);
+      expect(find.text('Register New Store'), findsOneWidget);
       
       _clearTestViewport(tester);
     });
@@ -77,7 +76,8 @@ void main() {
 
       // Tap the Sign In button to trigger validation
       final signInButton = find.widgetWithText(ElevatedButton, 'Sign In');
-      await tester.ensureVisible(signInButton);
+      await tester.drag(find.byType(SingleChildScrollView), const Offset(0, -300));
+      await tester.pumpAndSettle();
       await tester.tap(signInButton);
       await tester.pumpAndSettle();
 
@@ -116,7 +116,7 @@ void main() {
       final client = MockHttpClient((req) async {
         return _jsonRes({'detail': 'No active account found with the given credentials'}, 401);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client);
 
       await tester.pumpWidget(_buildTestApp(
         child: LoginScreen(
@@ -159,7 +159,7 @@ void main() {
         }
         return _jsonRes({}, 404);
       });
-      final api = ApiService(client: client);
+      final api = ApiService(config: ApiConfig.emulator(), client: client);
 
       await tester.pumpWidget(_buildTestApp(
         child: LoginScreen(

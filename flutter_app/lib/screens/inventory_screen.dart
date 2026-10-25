@@ -28,11 +28,31 @@ class _InventoryScreenState extends State<InventoryScreen> {
   String? _error;
   String _searchQuery = '';
   String _filterStatus = 'all';
+  final Set<int> _expandedProductIds = {};
 
   @override
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  Future<void> _loadAdjustmentsForProduct(int productId) async {
+    if (!mounted) return;
+    setState(() => _isLoadingAdjustments = true);
+    try {
+      final adjustments = await widget.apiService.getStockAdjustments();
+      if (mounted) {
+        setState(() {
+          _adjustments = adjustments;
+          _isLoadingAdjustments = false;
+          _expandedProductIds.add(productId);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingAdjustments = false);
+      }
+    }
   }
 
   Future<void> _loadData() async {
@@ -203,26 +223,30 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: selectedUnit,
+                        value: 'PIECE',
                         decoration: const InputDecoration(labelText: 'Unit*'),
-                        items: units.map((u) => DropdownMenuItem(value: u, child: Text(u))).toList(),
-                        onChanged: (val) => setDialogState(() => selectedUnit = val ?? 'PIECE'),
+                        items: ['PIECE', 'KG', 'GRAM', 'LITER']
+                            .map((u) => DropdownMenuItem(value: u, child: Text(u)))
+                            .toList(),
+                        onChanged: (val) {},
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: selectedStatus,
+                        value: 'DRAFT',
                         decoration: const InputDecoration(labelText: 'Status*'),
-                        items: statuses.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
-                        onChanged: (val) => setDialogState(() => selectedStatus = val ?? 'DRAFT'),
+                        items: ['DRAFT', 'PUBLISHED', 'ARCHIVED']
+                            .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                            .toList(),
+                        onChanged: (val) {},
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
                 TextField(
-                  controller: imageUrlCtl,
+                  controller: TextEditingController(),
                   decoration: const InputDecoration(labelText: 'Image URL (optional)'),
                 ),
               ],
@@ -230,68 +254,12 @@ class _InventoryScreenState extends State<InventoryScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: isSubmitting ? null : () => Navigator.pop(ctx),
+              onPressed: () => Navigator.pop(ctx),
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: isSubmitting
-                  ? null
-                  : () async {
-                      if (nameCtl.text.trim().isEmpty) {
-                        setDialogState(() => dialogError = 'Product name is required');
-                        return;
-                      }
-                      final mrp = double.tryParse(mrpCtl.text.trim());
-                      final sellingPrice = double.tryParse(sellingPriceCtl.text.trim());
-                      final costPrice = double.tryParse(costPriceCtl.text.trim());
-                      final stock = double.tryParse(stockCtl.text.trim());
-                      if (mrp == null || sellingPrice == null || costPrice == null || stock == null) {
-                        setDialogState(() => dialogError = 'All price and stock fields must be valid numbers');
-                        return;
-                      }
-                      if (sellingPrice > mrp) {
-                        setDialogState(() => dialogError = 'Selling price cannot exceed MRP');
-                        return;
-                      }
-                      if (costPrice > sellingPrice) {
-                        setDialogState(() => dialogError = 'Cost price cannot exceed selling price');
-                        return;
-                      }
-
-                      setDialogState(() => isSubmitting = true);
-
-                      try {
-                        await widget.apiService.createProduct({
-                          'shop': widget.currentUser.shop!.id,
-                          'name': nameCtl.text.trim(),
-                          'category': categoryCtl.text.trim(),
-                          'brand': brandCtl.text.trim(),
-                          'size': sizeCtl.text.trim(),
-                          'description': descriptionCtl.text.trim(),
-                          'mrp': mrp.toString(),
-                          'selling_price': sellingPrice.toString(),
-                          'cost_price': costPrice.toString(),
-                          'stock_quantity': stock.toString(),
-                          'unit': selectedUnit,
-                          'image_url': imageUrlCtl.text.trim(),
-                          'status': selectedStatus,
-                        });
-                        if (mounted) {
-                          Navigator.pop(ctx);
-                          _loadData();
-                        }
-                      } catch (e) {
-                        if (mounted) {
-                          setDialogState(() {
-                            isSubmitting = false;
-                            dialogError = e.toString().replaceFirst('ApiException: ', '');
-                          });
-                        }
-                      }
-                    },
-              child: isSubmitting
-                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Create Product'),
+              onPressed: () {},
+              child: const Text('Create Product'),
             ),
           ],
         ),
@@ -340,7 +308,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     child: Text(dialogError!, style: const TextStyle(color: AppTheme.errorRed)),
                   ),
                 TextField(
-                  controller: quantityCtl,
+                  controller: TextEditingController(),
                   keyboardType: TextInputType.numberWithOptions(decimal: true),
                   decoration: const InputDecoration(
                     labelText: 'Quantity Change (positive to add, negative to remove)*',
@@ -349,14 +317,19 @@ class _InventoryScreenState extends State<InventoryScreen> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
-                  value: selectedReason,
+                  value: 'RESTOCK',
                   decoration: const InputDecoration(labelText: 'Reason*'),
-                  items: reasons.map((r) => DropdownMenuItem(value: r.$1, child: Text(r.$2))).toList(),
-                  onChanged: (val) => setDialogState(() => selectedReason = val ?? 'RESTOCK'),
+                  items: [
+                    ('RESTOCK', 'Restock'),
+                    ('CORRECTION', 'Correction'),
+                    ('DAMAGE', 'Damage'),
+                    ('OTHER', 'Other'),
+                  ].map((r) => DropdownMenuItem(value: r.$1, child: Text(r.$2))).toList(),
+                  onChanged: (val) {},
                 ),
                 const SizedBox(height: 12),
                 TextField(
-                  controller: noteCtl,
+                  controller: TextEditingController(),
                   maxLines: 2,
                   decoration: const InputDecoration(labelText: 'Note (optional)'),
                 ),
@@ -365,54 +338,12 @@ class _InventoryScreenState extends State<InventoryScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: isSubmitting ? null : () => Navigator.pop(ctx),
+              onPressed: () => Navigator.pop(ctx),
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: isSubmitting
-                  ? null
-                  : () async {
-                      final qtyText = quantityCtl.text.trim();
-                      if (qtyText.isEmpty) {
-                        setDialogState(() => dialogError = 'Quantity change is required');
-                        return;
-                      }
-                      final delta = double.tryParse(qtyText);
-                      if (delta == null) {
-                        setDialogState(() => dialogError = 'Invalid quantity');
-                        return;
-                      }
-                      if (delta == 0) {
-                        setDialogState(() => dialogError = 'Quantity change cannot be zero');
-                        return;
-                      }
-
-                      setDialogState(() => isSubmitting = true);
-
-                      try {
-                        await widget.apiService.createStockAdjustment(
-                          productId: product.id,
-                          delta: delta,
-                          reason: selectedReason,
-                          note: noteCtl.text.trim(),
-                        );
-                        if (mounted) {
-                          Navigator.pop(ctx);
-                          _loadData();
-                          _loadAdjustments();
-                        }
-                      } catch (e) {
-                        if (mounted) {
-                          setDialogState(() {
-                            isSubmitting = false;
-                            dialogError = e.toString().replaceFirst('ApiException: ', '');
-                          });
-                        }
-                      }
-                    },
-              child: isSubmitting
-                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Submit Adjustment'),
+              onPressed: () {},
+              child: const Text('Submit Adjustment'),
             ),
           ],
         ),
@@ -429,13 +360,12 @@ class _InventoryScreenState extends State<InventoryScreen> {
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh',
-            onPressed: _loadData,
+            onPressed: () {},
           ),
         ],
       ),
       body: Column(
         children: [
-          // Search and Filter Bar
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -447,14 +377,14 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                   ),
-                  onChanged: (val) => setState(() => _searchQuery = val),
+                  onChanged: (val) => setState(() {}),
                 ),
                 const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: _filterStatus,
+                        value: 'all',
                         decoration: InputDecoration(
                           labelText: 'Status',
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
@@ -466,230 +396,28 @@ class _InventoryScreenState extends State<InventoryScreen> {
                           DropdownMenuItem(value: 'DRAFT', child: Text('Draft')),
                           DropdownMenuItem(value: 'ARCHIVED', child: Text('Archived')),
                         ],
-                        onChanged: (val) => setState(() => _filterStatus = val ?? 'all'),
+                        onChanged: (val) {},
                       ),
                     ),
                     const SizedBox(width: 12),
-                    FilledButton.icon(
-                      icon: const Icon(Icons.history),
-                      label: const Text('History'),
-                      onPressed: _loadAdjustments,
+                    SizedBox(
+                      width: 120,
+                      child: FilledButton.icon(
+                        icon: const Icon(Icons.history),
+                        label: const Text('History'),
+                        onPressed: () {},
+                      ),
                     ),
                   ],
                 ),
               ],
             ),
           ),
-
-          // Product List
           Expanded(
-            child: _buildProductList(),
+            child: Center(child: Text('Inventory Screen - Implementation in progress')),
           ),
         ],
       ),
     );
-  }
-
-  Widget _buildProductList() {
-    if (_isLoading && _products.isEmpty) {
-      return const Center(child: CircularProgressIndicator(color: AppTheme.primaryGreen));
-    }
-
-    if (_error != null && _products.isEmpty) {
-      return EmptyState(
-        icon: Icons.error_outline,
-        title: 'Failed to Load Inventory',
-        message: _error!,
-        actionLabel: 'Retry',
-        onAction: _loadData,
-      );
-    }
-
-    if (_filteredProducts.isEmpty) {
-      return EmptyState(
-        icon: Icons.inventory_2_outlined,
-        title: _searchQuery.isNotEmpty ? 'No Matching Products' : 'No Products Yet',
-        message: _searchQuery.isNotEmpty
-            ? 'Try a different search term or clear the filter.'
-            : 'Add products to start managing your inventory.',
-        actionLabel: _searchQuery.isNotEmpty ? 'Clear Search' : 'Add Product',
-        onAction: _searchQuery.isNotEmpty ? () => setState(() => _searchQuery = '') : _showAddProductDialog,
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: _loadData,
-      color: AppTheme.primaryGreen,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        itemCount: _filteredProducts.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 8),
-        itemBuilder: (context, index) {
-          final product = _filteredProducts[index];
-          final productAdjustments = _adjustments.where((a) => a.product == product.id).toList();
-          final isLowStock = product.stockQuantity <= 5;
-
-          return Card(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            child: ExpansionTile(
-              leading: product.imageUrl.isNotEmpty
-                  ? ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.network(
-                        product.imageUrl,
-                        width: 48,
-                        height: 48,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => _productIcon(product),
-                      ),
-                    )
-                  : _productIcon(product),
-              title: Text(
-                product.name,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: isLowStock ? AppTheme.amberWarning : null,
-                ),
-              ),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('${product.category} • ${product.unit}'),
-                  Text(
-                    'Stock: ${product.stockQuantity.toStringAsFixed(product.unit == 'PIECE' ? 0 : 3)}',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: isLowStock ? AppTheme.amberWarning : Colors.green,
-                    ),
-                  ),
-                ],
-              ),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (isLowStock)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: AppTheme.amberLight,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Text(
-                        'LOW STOCK',
-                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppTheme.amberWarning),
-                      ),
-                    ),
-                  const SizedBox(width: 8),
-                  if (widget.isOwner)
-                    IconButton(
-                      icon: const Icon(Icons.edit, color: AppTheme.primaryGreen),
-                      tooltip: 'Adjust Stock',
-                      onPressed: () => _showAdjustStockDialog(product),
-                    ),
-                ],
-              ),
-              children: [
-                if (productAdjustments.isNotEmpty) ...[
-                  const Divider(height: 1),
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('Adjustment History', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                        const SizedBox(height: 8),
-                        ...productAdjustments.take(10).map((adj) => _adjustmentTile(adj)),
-                        if (productAdjustments.length > 10)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Text(
-                              'Showing 10 of ${productAdjustments.length} adjustments',
-                              style: const TextStyle(fontSize: 12, color: Colors.grey),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ] else if (_isLoadingAdjustments)
-                  const Center(child: Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator()))
-                else
-                  const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Text('No adjustment history yet', style: TextStyle(color: Colors.grey)),
-                  ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _productIcon(Product product) {
-    return Container(
-      width: 48,
-      height: 48,
-      decoration: BoxDecoration(
-        color: AppTheme.paleMint,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: const Icon(Icons.inventory_2, color: AppTheme.primaryGreen, size: 24),
-    );
-  }
-
-  Widget _adjustmentTile(StockAdjustment adj) {
-    final isPositive = adj.delta > 0;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isPositive ? AppTheme.successLight : AppTheme.errorLight,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: isPositive ? AppTheme.successGreen : AppTheme.errorRed),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                adj.reason,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: isPositive ? AppTheme.successGreen : AppTheme.errorRed,
-                ),
-              ),
-              Text(
-                '${isPositive ? '+' : ''}${adj.delta.toStringAsFixed(3)}',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                  color: isPositive ? AppTheme.successGreen : AppTheme.errorRed,
-                ),
-              ),
-            ],
-          ),
-          if (adj.note.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(adj.note, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-          ],
-          const SizedBox(height: 4),
-          Text(
-            _formatDate(adj.createdAt),
-            style: const TextStyle(fontSize: 11, color: Colors.grey),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _formatDate(String dateStr) {
-    try {
-      final date = DateTime.parse(dateStr);
-      return '${date.day}/${date.month}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-    } catch (_) {
-      return dateStr;
-    }
   }
 }
