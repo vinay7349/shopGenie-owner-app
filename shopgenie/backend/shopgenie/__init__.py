@@ -1,1 +1,0 @@
-# shopgenie package

@@ -4,7 +4,7 @@ ShopGenie is a production-grade retail management and POS billing platform speci
 
 1. **Flutter & Dart Cross-Platform App (`flutter_app/`)**: Full-featured mobile client built with **Flutter 3.x and Dart**, featuring Material 3 UI, role-based navigation for Shop Owners and Workers, single-shop profile management, and POS billing.
 2. **Native Android App (`app/`)**: Native client built with **Jetpack Compose (Material 3)**, Retrofit 2, and Kotlin Coroutines, powering the live interactive preview.
-3. **Django REST Framework Backend (`shopgenie/backend/`)**: Backend API with strict **Role-Based Access Control (RBAC)**, 1:1 Shop Ownership enforcement, worker management with permission toggles, cost-price masking for workers, and atomic stock transactions.
+3. **Django REST Framework Unified Backend (`R:\shopgenie backend\shopgenie_unified\`)**: Backend API with strict **Role-Based Access Control (RBAC)**, 1:1 Shop Ownership enforcement, worker management with permission toggles, cost-price masking for workers, and atomic stock transactions.
 4. **Computer Vision Engine (`cv_engine/`)**: PyTorch MobileNetV3 + OpenCV pipeline producing 576-dimensional L2-normalized embeddings for instant visual product recognition.
 
 ---
@@ -185,7 +185,7 @@ Configure the backend endpoint in `flutter_app/lib/api_service.dart` (defaults t
 
 1. Navigate to the backend directory:
    ```bash
-   cd shopgenie/backend
+   cd "R:\shopgenie backend\shopgenie_unified"
    ```
 
 2. Create and activate a Python virtual environment:
@@ -276,7 +276,7 @@ Configure the backend endpoint in `flutter_app/lib/api_service.dart` (defaults t
 
 - **Phase 1 Backend Verification:**
   ```bash
-  python shopgenie/backend/run_phase1_tests.py
+  python manage.py test
   ```
 - **Phase 2 Computer Vision Engine Verification:**
   ```bash
