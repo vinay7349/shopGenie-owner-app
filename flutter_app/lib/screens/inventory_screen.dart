@@ -7,11 +7,13 @@ import '../widgets/empty_state.dart';
 class InventoryScreen extends StatefulWidget {
   final ApiService apiService;
   final bool isOwner;
+  final User currentUser;
 
   const InventoryScreen({
     super.key,
     required this.apiService,
     required this.isOwner,
+    required this.currentUser,
   });
 
   @override
@@ -89,6 +91,212 @@ class _InventoryScreenState extends State<InventoryScreen> {
       result = result.where((p) => p.status.toLowerCase() == _filterStatus.toLowerCase()).toList();
     }
     return result;
+  }
+
+  void _showAddProductDialog() {
+    final nameCtl = TextEditingController();
+    final categoryCtl = TextEditingController(text: 'General');
+    final brandCtl = TextEditingController();
+    final sizeCtl = TextEditingController();
+    final descriptionCtl = TextEditingController();
+    final mrpCtl = TextEditingController();
+    final sellingPriceCtl = TextEditingController();
+    final costPriceCtl = TextEditingController();
+    final stockCtl = TextEditingController(text: '0');
+    final imageUrlCtl = TextEditingController();
+    String selectedUnit = 'PIECE';
+    String selectedStatus = 'DRAFT';
+    bool isSubmitting = false;
+    String? dialogError;
+
+    const units = ['PIECE', 'KG', 'GRAM', 'LITER'];
+    const statuses = ['DRAFT', 'PUBLISHED', 'ARCHIVED'];
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Add New Product'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (dialogError != null)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppTheme.errorLight,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppTheme.errorRed.withValues(alpha: 0.3)),
+                    ),
+                    child: Text(dialogError!, style: const TextStyle(color: AppTheme.errorRed)),
+                  ),
+                TextField(
+                  controller: nameCtl,
+                  decoration: const InputDecoration(labelText: 'Product Name*'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: categoryCtl,
+                  decoration: const InputDecoration(labelText: 'Category'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: brandCtl,
+                  decoration: const InputDecoration(labelText: 'Brand (optional)'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: sizeCtl,
+                  decoration: const InputDecoration(labelText: 'Size (optional)'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: descriptionCtl,
+                  maxLines: 2,
+                  decoration: const InputDecoration(labelText: 'Description (optional)'),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: mrpCtl,
+                        keyboardType: TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(labelText: 'MRP*'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: sellingPriceCtl,
+                        keyboardType: TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(labelText: 'Selling Price*'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: costPriceCtl,
+                        keyboardType: TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(labelText: 'Cost Price*'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: stockCtl,
+                        keyboardType: TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(labelText: 'Initial Stock*'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: selectedUnit,
+                        decoration: const InputDecoration(labelText: 'Unit*'),
+                        items: units.map((u) => DropdownMenuItem(value: u, child: Text(u))).toList(),
+                        onChanged: (val) => setDialogState(() => selectedUnit = val ?? 'PIECE'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: selectedStatus,
+                        decoration: const InputDecoration(labelText: 'Status*'),
+                        items: statuses.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                        onChanged: (val) => setDialogState(() => selectedStatus = val ?? 'DRAFT'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: imageUrlCtl,
+                  decoration: const InputDecoration(labelText: 'Image URL (optional)'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSubmitting ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: isSubmitting
+                  ? null
+                  : () async {
+                      if (nameCtl.text.trim().isEmpty) {
+                        setDialogState(() => dialogError = 'Product name is required');
+                        return;
+                      }
+                      final mrp = double.tryParse(mrpCtl.text.trim());
+                      final sellingPrice = double.tryParse(sellingPriceCtl.text.trim());
+                      final costPrice = double.tryParse(costPriceCtl.text.trim());
+                      final stock = double.tryParse(stockCtl.text.trim());
+                      if (mrp == null || sellingPrice == null || costPrice == null || stock == null) {
+                        setDialogState(() => dialogError = 'All price and stock fields must be valid numbers');
+                        return;
+                      }
+                      if (sellingPrice > mrp) {
+                        setDialogState(() => dialogError = 'Selling price cannot exceed MRP');
+                        return;
+                      }
+                      if (costPrice > sellingPrice) {
+                        setDialogState(() => dialogError = 'Cost price cannot exceed selling price');
+                        return;
+                      }
+
+                      setDialogState(() => isSubmitting = true);
+
+                      try {
+                        await widget.apiService.createProduct({
+                          'shop': widget.currentUser.shop!.id,
+                          'name': nameCtl.text.trim(),
+                          'category': categoryCtl.text.trim(),
+                          'brand': brandCtl.text.trim(),
+                          'size': sizeCtl.text.trim(),
+                          'description': descriptionCtl.text.trim(),
+                          'mrp': mrp.toString(),
+                          'selling_price': sellingPrice.toString(),
+                          'cost_price': costPrice.toString(),
+                          'stock_quantity': stock.toString(),
+                          'unit': selectedUnit,
+                          'image_url': imageUrlCtl.text.trim(),
+                          'status': selectedStatus,
+                        });
+                        if (mounted) {
+                          Navigator.pop(ctx);
+                          _loadData();
+                        }
+                      } catch (e) {
+                        if (mounted) {
+                          setDialogState(() {
+                            isSubmitting = false;
+                            dialogError = e.toString().replaceFirst('ApiException: ', '');
+                          });
+                        }
+                      }
+                    },
+              child: isSubmitting
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('Create Product'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showAdjustStockDialog(Product product) {
@@ -305,7 +513,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
             ? 'Try a different search term or clear the filter.'
             : 'Add products to start managing your inventory.',
         actionLabel: _searchQuery.isNotEmpty ? 'Clear Search' : 'Add Product',
-        onAction: _searchQuery.isNotEmpty ? () => setState(() => _searchQuery = '') : null,
+        onAction: _searchQuery.isNotEmpty ? () => setState(() => _searchQuery = '') : _showAddProductDialog,
       );
     }
 

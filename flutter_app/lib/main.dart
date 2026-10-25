@@ -148,7 +148,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final List<Widget> ownerPages = [
       _buildOwnerDashboard(),
       _buildBillingPOS(),
-      InventoryScreen(apiService: _api, isOwner: true),
+      InventoryScreen(apiService: _api, isOwner: true, currentUser: currentUser),
       OfferScreen(apiService: _api),
       AnnouncementScreen(apiService: _api),
       WorkerManagementScreen(apiService: _api),
@@ -158,7 +158,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final List<Widget> workerPages = [
       _buildWorkerDashboard(),
       _buildBillingPOS(),
-      InventoryScreen(apiService: _api, isOwner: false),
+      InventoryScreen(apiService: _api, isOwner: false, currentUser: currentUser),
       _buildWorkerProfile(),
     ];
 
@@ -261,16 +261,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   Widget _buildOwnerDashboard() {
     final salesStr = _dashboard != null
         ? '₹${_dashboard!.todaySales.toStringAsFixed(0)}'
-        : '₹18,420';
+        : '—';
     final billsStr = _dashboard != null
         ? '${_dashboard!.todayInvoices}'
-        : '46';
+        : '—';
     final totalProdStr = _dashboard != null
         ? '${_dashboard!.totalProducts}'
-        : '${_products.length}';
+        : '—';
     final lowStockStr = _dashboard != null
         ? '${_dashboard!.lowStockProducts}'
-        : '0';
+        : '—';
 
     return RefreshIndicator(
       onRefresh: _loadDashboard,
@@ -309,7 +309,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                       _metricCol('Products', totalProdStr, Icons.inventory_2),
                     ],
                   ),
-                  if (int.tryParse(lowStockStr) != null && int.parse(lowStockStr) > 0) ...[
+                  if (lowStockStr != '—' && int.tryParse(lowStockStr) != null && int.parse(lowStockStr) > 0) ...[
                     const SizedBox(height: 12),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
